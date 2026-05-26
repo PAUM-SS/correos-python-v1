@@ -6,33 +6,31 @@ Edita este archivo para adaptar el proyecto a tu hoja de cálculo.
 # ── Nombres de columnas en Google Sheets ──────────────────────────────────
 # Deben coincidir EXACTAMENTE con los encabezados de tu hoja (sensible a mayúsculas).
 COLUMN_CONFIG: dict[str, str] = {
-    "nombre":   "Nombres",
-    "apellido": "Apellidos",           # ← columna de apellido(s)
+    "nombre":   "Nombre",
+    "apellido": "Apellido",           # ← columna de apellido(s)
     "empresa":  "Empresa",
-    "email":    "Correo electrónico de contacto (Asegúrese de que sea una dirección activa)",
-    "folio":    "Folio",
+    "email":    "Email",
+    "folio":    "Número de Folio",
     "fecha":    "Timestamp",          # columna de fecha del Google Form
     "estado":   "Estado",             # columna de control; se crea si no existe
 }
-
 
 # ── Google Drive — carpeta temporal para conversión a PDF ────────────────────
 # Crea una carpeta en TU Google Drive personal, compártela con el email de la
 # cuenta de servicio (rol Editor) y pega aquí el ID de la carpeta.
 # El ID está en la URL: drive.google.com/drive/folders/<FOLDER_ID>
 # Si se deja vacío, sube al Drive de la cuenta de servicio (cuota limitada).
-# DRIVE_FOLDER_ID: str = "1_sPs6PlSo8JLrcOrKvBkEzdIWAoEByh6"   # ← pega aquí el ID de tu carpeta compartida
-
+DRIVE_FOLDER_ID: str = ""   # ← pega aquí el ID de tu carpeta compartida
 
 # ── Rutas de archivos ─────────────────────────────────────────────────────
 CREDENTIALS_FILE: str = "credentials.json"               # cuenta de servicio de Google
-TEMPLATE_FILE:    str = "plantilla_original.png"      # plantilla con <<MARCADORES>>
+TEMPLATE_FILE:    str = "plantilla_constancia.png"       # plantilla PNG con <<MARCADORES>>
 OUTPUT_FOLDER:    str = "constancias_generadas"           # carpeta de salida
 
 # ── Google API ────────────────────────────────────────────────────────────
 GOOGLE_SCOPES: list[str] = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/drive"       # completo: sube y borra temporales para PDF,
 ]
 
 # ── Control de envío ──────────────────────────────────────────────────────

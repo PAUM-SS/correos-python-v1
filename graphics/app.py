@@ -18,9 +18,14 @@ from tkinter import ttk, messagebox
 
 from config        import COLOR, BATCH_SIZE, EMAIL_DELAY, COLUMN_CONFIG, CREDENTIALS_FILE, TEMPLATE_FILE
 from config_manager import cargar_settings, aplicar_settings
-from auth          import conectar_google_sheets, obtener_registros_con_folio, marcar_enviado_en_sheet
+from auth          import (
+    conectar_google_sheets, obtener_registros_con_folio,
+    registrar_documento_generado, registrar_link_drive, registrar_estado_envio,
+    subir_pdf,
+)
 from send          import enviar_correo
-from templates     import generar_constancia_pptx, limpiar_temporales_drive, SESION_CONFIG
+from templates     import generar_constancia, generar_nombre_archivo, limpiar_temporales_drive, SESION_CONFIG
+from config_manager import cargar_settings
 from graphics.styles        import aplicar_estilos
 from graphics.panels        import (
     PanelCredenciales,
@@ -251,71 +256,82 @@ class AplicacionConstancias(tk.Tk):
                 self.log("⛔ Envío detenido por el usuario.", "warn")
                 break
 
-            nombre = fila.get(COLUMN_CONFIG["nombre"], "").strip()
-            email  = fila.get(COLUMN_CONFIG["email"],  "").strip()
-            folio  = fila.get(COLUMN_CONFIG["folio"],  "").strip()
+            nombre   = str(fila.get(COLUMN_CONFIG.get("nombre",   "Nombres"),   "")).strip()
+            apellido = str(fila.get(COLUMN_CONFIG.get("apellido", "Apellidos"), "")).strip()
+            email    = str(fila.get(COLUMN_CONFIG.get("email",    "Email"),     "")).strip()
+            folio    = str(fila.get(COLUMN_CONFIG.get("folio",    "Folio"),     "")).strip()
 
-            self.log(f"[{i+1}/{total}] Procesando → '{nombre}' | email: '{email}' | folio: '{folio}'")
+            self.log(f"[{i+1}/{total}] '{nombre} {apellido}' | {email} | {folio}")
 
-            # ── Validar folio (red de seguridad si el filtro de Sheets falló) ──
             if not folio or "/" in folio:
-                fallidos += 1
-                fila["_estado_local"] = "fallido"
+                fallidos += 1; fila["_estado_local"] = "fallido"
                 self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Folio inválido", "fallido"))
-                self.log(
-                    f"  ⚠ Folio '{folio}' inválido (vacío o contiene '/') — omitido sin generar constancia.",
-                    "warn",
-                )
+                self.log(f"  ⚠ Folio '{folio}' inválido — omitido.", "warn")
                 continue
 
-            # ── Validación previa al envío ────────────────────────────────
             if not email:
-                fallidos += 1
-                fila["_estado_local"] = "fallido"
+                fallidos += 1; fila["_estado_local"] = "fallido"
                 self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Sin email", "fallido"))
-                self.log(
-                    f"  ✘ Fila omitida: email vacío. "
-                    f"Verifica que config.py tenga el nombre exacto de la columna email "
-                    f"(columnas disponibles: {list(fila.keys())[:6]}…)",
-                    "err",
-                )
+                self.log(f"  ✘ Email vacío. Columnas: {list(fila.keys())[:5]}…", "err")
                 continue
 
-            if not nombre:
-                self.log(f"  ⚠ Nombre vacío para {email} — se usará 'Participante'", "warn")
-                nombre = "Participante"
-
-            self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Enviando…", "enviando"))
+            self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Generando…", "enviando"))
 
             try:
-                archivo = generar_constancia_pptx(fila)
-                self.log(f"  → Enviando a {email}…")
+                cfg        = cargar_settings()
+                nombre_pdf = generar_nombre_archivo(fila, cfg)
+                pdf_bytes  = generar_constancia(fila)
+                self.log(f"  ✔ PDF: {nombre_pdf}", "ok")
+
+                # Subir a Drive
+                link_drive = ""
+                folder_id  = cfg.get("drive", {}).get("folder_id", "")
+                if folder_id:
+                    try:
+                        self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Subiendo a Drive…", "enviando"))
+                        res = subir_pdf(pdf_bytes, nombre_pdf, folder_id)
+                        link_drive = res.get("webViewLink", "")
+                        self.log(f"  ☁ Drive: {link_drive}", "ok")
+                    except Exception as e_dr:
+                        self.log(f"  ⚠ Drive: {e_dr}", "warn")
+
+                # Registrar en Sheets
+                if self.worksheet:
+                    try:
+                        registrar_documento_generado(self.worksheet, folio)
+                        if link_drive:
+                            registrar_link_drive(self.worksheet, folio, link_drive)
+                    except Exception as e_sh:
+                        self.log(f"  ⚠ Sheets (generado): {e_sh}", "warn")
+
+                # Enviar correo
+                self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Enviando correo…", "enviando"))
+                email_cfg = cfg.get("email_cuerpo", {})
                 enviar_correo(
                     remitente=self.var_remitente.get().strip(),
                     contrasena=self.var_contrasena.get().strip(),
                     destinatario=email,
-                    nombre=nombre,
-                    folio=folio,
-                    archivo_adjunto=archivo,
+                    nombre=nombre, apellido=apellido, folio=folio,
+                    archivo_adjunto=pdf_bytes, nombre_archivo=nombre_pdf,
+                    asunto_tpl=email_cfg.get("asunto", "Constancia — Folio {folio}"),
+                    html_tpl=email_cfg.get("html", ""),
                 )
-                enviados += 1
-                fila["_estado_local"] = "enviado"
-                self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Enviado", "enviado"))
+                enviados += 1; fila["_estado_local"] = "enviado"
+                self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Enviado ✔", "enviado"))
                 self.log(f"  ✔ Enviado a {email}", "ok")
 
-                # Marcar en Google Sheets
                 if self.worksheet:
-                    try:
-                        marcar_enviado_en_sheet(self.worksheet, folio)
-                    except Exception as e_sh:
-                        self.log(f"  ⚠ No se pudo actualizar Sheets: {e_sh}", "warn")
+                    try: registrar_estado_envio(self.worksheet, folio, enviado=True)
+                    except Exception: pass
 
             except Exception as e:
-                fallidos += 1
-                fila["_estado_local"] = "fallido"
+                fallidos += 1; fila["_estado_local"] = "fallido"
                 self.after(0, lambda ix=idx, er=str(e):
                     self.panel_tabla.actualizar_fila(ix, f"Error: {er[:40]}", "fallido"))
                 self.log(f"  ✘ Error con {email}: {e}", "err")
+                if self.worksheet:
+                    try: registrar_estado_envio(self.worksheet, folio, enviado=False)
+                    except Exception: pass
 
             # Progreso visual
             pct = ((i + 1) / total) * 100

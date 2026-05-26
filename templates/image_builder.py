@@ -112,6 +112,22 @@ CAMPOS = {
 #  API PÚBLICA
 # ─────────────────────────────────────────────────────────────────────────────
 
+def generar_nombre_archivo(datos_fila: dict, settings: dict) -> str:
+    """
+    Genera el nombre del archivo PDF según la configuración.
+    Formato: {valor_columna} ConstSesion{sufijo}.pdf
+
+    'filename_campo' es el nombre EXACTO de la columna en Google Sheets
+    (ej: "Folio", "Nombre completo del solicitante", etc.)
+    """
+    general  = settings.get("general", {})
+    col_name = general.get("filename_campo",  "Folio")   # nombre exacto de columna en Sheets
+    sufijo   = general.get("filename_sufijo", "")
+    valor    = str(datos_fila.get(col_name, "SIN_VALOR")).strip()
+    valor    = valor.replace("/", "-").replace("\\", "-").replace(" ", "_")
+    return f"{valor} ConstSesion{sufijo}.pdf"
+
+
 def generar_constancia(datos_fila: dict) -> bytes:
     """
     Genera la constancia en PDF.

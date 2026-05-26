@@ -1,19 +1,18 @@
 """
 auth/google_sheets.py
-Maneja la autenticación con la API de Google y todas las operaciones
-de lectura/escritura sobre Google Sheets.
+Maneja autenticación con Google Sheets y operaciones de lectura/escritura.
 
-PREREQS:
-    pip install gspread google-auth
+Columnas de seguimiento que se crean automáticamente en la hoja:
+  - "Documento Generado" : timestamp de cuando se generó el PDF
+  - "Link Drive"         : URL directa al archivo en Drive
+  - "Correo Enviado"     : "Enviado DD/MM/YYYY HH:MM" o "Fallido ..."
 
-SETUP:
-    1. Habilita Google Sheets API y Google Drive API en Google Cloud Console.
-    2. Crea una Cuenta de Servicio y descarga el JSON como 'credentials.json'.
-    3. Comparte la hoja con el email de la Cuenta de Servicio
-       (nombre@proyecto.iam.gserviceaccount.com) dándole rol Editor.
+La columna "Correo Enviado" se usa para deduplicación:
+  si ya dice "Enviado...", esa fila no se procesa de nuevo.
 """
 
 import os
+import datetime
 
 try:
     import gspread
@@ -24,6 +23,10 @@ except ImportError:
 
 from config import CREDENTIALS_FILE, GOOGLE_SCOPES, COLUMN_CONFIG
 
+# Nombres fijos de las columnas de seguimiento (no configurables)
+COL_DOC_GENERADO  = "Documento Generado"
+COL_LINK_DRIVE    = "Link Drive"
+COL_CORREO_ESTADO = "Correo Enviado"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -31,162 +34,145 @@ from config import CREDENTIALS_FILE, GOOGLE_SCOPES, COLUMN_CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
 def conectar_google_sheets(spreadsheet_id: str):
-    """
-    Autentica con la Cuenta de Servicio y retorna el primer worksheet.
-
-    Args:
-        spreadsheet_id: ID de la hoja (parte de la URL entre /d/ y /edit).
-
-    Returns:
-        gspread.Worksheet: hoja de trabajo activa.
-
-    Raises:
-        ImportError:        si gspread / google-auth no están instalados.
-        FileNotFoundError:  si credentials.json no existe en la raíz del proyecto.
-        gspread.exceptions.APIError: si el ID es inválido o faltan permisos.
-    """
     if not GSPREAD_AVAILABLE:
-        raise ImportError(
-            "Librerías de Google no disponibles.\n"
-            "Instala con: pip install gspread google-auth"
-        )
-
+        raise ImportError("Instala: pip install gspread google-auth")
     if not os.path.exists(CREDENTIALS_FILE):
         raise FileNotFoundError(
             f"No se encontró '{CREDENTIALS_FILE}'.\n"
             "Descárgalo desde Google Cloud Console → Cuenta de Servicio → JSON."
         )
-
     creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=GOOGLE_SCOPES)
     cliente = gspread.authorize(creds)
-    spreadsheet = cliente.open_by_key(spreadsheet_id)
-
-    # Retorna la primera hoja; cambia a .worksheet("NombreHoja") si es otra.
-    return spreadsheet.sheet1
+    return cliente.open_by_key(spreadsheet_id).sheet1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  DIAGNÓSTICO DE ENCABEZADOS
+#  VALIDACIÓN DE FOLIO
 # ─────────────────────────────────────────────────────────────────────────────
 
-def obtener_encabezados(worksheet) -> list[str]:
+def folio_es_valido(folio) -> bool:
     """
-    Retorna los encabezados reales de la hoja (fila 1).
-    Úsalo para verificar que COLUMN_CONFIG coincide con tu hoja real.
-    """
-    return worksheet.row_values(1)
-
-
-def verificar_columnas(worksheet) -> dict:
-    """
-    Compara los nombres en COLUMN_CONFIG contra los encabezados reales.
-
-    Returns:
-        dict con:
-            "encabezados"  : lista de encabezados reales de la hoja
-            "encontradas"  : {clave_config: nombre_columna}  — columnas que SÍ coinciden
-            "faltantes"    : {clave_config: nombre_buscado}  — columnas que NO se encontraron
-    """
-    encabezados_reales = obtener_encabezados(worksheet)
-    encontradas = {}
-    faltantes   = {}
-
-    for clave, nombre_columna in COLUMN_CONFIG.items():
-        if nombre_columna in encabezados_reales:
-            encontradas[clave] = nombre_columna
-        else:
-            faltantes[clave] = nombre_columna
-
-    return {
-        "encabezados": encabezados_reales,
-        "encontradas": encontradas,
-        "faltantes":   faltantes,
-    }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  LECTURA DE DATOS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def folio_es_valido(folio: str) -> bool:
-    """
-    Determina si un folio es válido para generar constancia.
-
-    Regla: un folio es INVÁLIDO si está vacío o contiene el carácter '/'.
-    Esto descarta automáticamente todas las variantes de "n/a":
-      n/a · N/a · N/A · n/A · etc.
-
-    Args:
-        folio: valor del campo folio tal como viene de la hoja.
-
-    Returns:
-        True si el folio es válido, False si debe omitirse.
+    Folio inválido si está vacío o contiene '/'.
+    Descarta n/a, N/A, N/a, etc. automáticamente.
     """
     valor = str(folio).strip()
-    if not valor:
-        return False          # vacío
-    if "/" in valor:
-        return False          # n/a, N/A, N/a, 01/2026, etc.
-    return True
+    return bool(valor) and "/" not in valor
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  VERIFICACIÓN DE ENCABEZADOS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def verificar_columnas(worksheet) -> dict:
+    encabezados = worksheet.row_values(1)
+    encontradas, faltantes = {}, {}
+    for clave, nombre in COLUMN_CONFIG.items():
+        (encontradas if nombre in encabezados else faltantes)[clave] = nombre
+    return {"encabezados": encabezados, "encontradas": encontradas, "faltantes": faltantes}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  LECTURA CON DEDUPLICACIÓN
+# ─────────────────────────────────────────────────────────────────────────────
 
 def obtener_registros_con_folio(worksheet) -> tuple[list[dict], dict]:
     """
-    Descarga todos los registros y filtra los que tienen un folio válido.
-
-    Un folio es INVÁLIDO si está vacío o contiene '/'.
-    Esto descarta todas las variantes de "n/a" (n/a, N/A, N/a…)
-    sin importar mayúsculas o minúsculas.
-
-    Args:
-        worksheet: objeto gspread.Worksheet activo.
-
-    Returns:
-        Tupla (registros_filtrados, reporte_columnas):
-            - registros_filtrados: lista de dicts con filas que tienen folio válido
-            - reporte_columnas:    resultado de verificar_columnas() para diagnóstico
+    Descarga registros y filtra por folio válido.
+    Marca como 'enviado' las filas donde COL_CORREO_ESTADO ya dice "Enviado".
+    Retorna (registros, reporte_columnas).
     """
     reporte   = verificar_columnas(worksheet)
     col_folio = COLUMN_CONFIG["folio"]
     todos     = worksheet.get_all_records()
 
-    filtrados = [
-        fila for fila in todos
-        if folio_es_valido(fila.get(col_folio, ""))
-    ]
+    filtrados = []
+    for fila in todos:
+        folio = fila.get(col_folio, "")
+        if not folio_es_valido(folio):
+            continue
+
+        estado_envio = str(fila.get(COL_CORREO_ESTADO, "")).strip()
+        if estado_envio.lower().startswith("enviado"):
+            fila["_estado_local"] = "enviado"
+        else:
+            fila["_estado_local"] = "listo"
+
+        filtrados.append(fila)
 
     return filtrados, reporte
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ESCRITURA DE ESTADO
+#  ESCRITURA DE SEGUIMIENTO
 # ─────────────────────────────────────────────────────────────────────────────
 
-def marcar_enviado_en_sheet(worksheet, folio: str, estado: str = "Enviado") -> None:
-    """
-    Localiza la fila con el folio indicado y actualiza la columna 'Estado'.
-    Si la columna no existe, la crea al final de los encabezados.
-
-    Args:
-        worksheet: objeto gspread.Worksheet activo.
-        folio:     número de folio a buscar.
-        estado:    texto a escribir en la columna Estado (default: "Enviado").
-    """
-    col_folio  = COLUMN_CONFIG["folio"]
-    col_estado = COLUMN_CONFIG["estado"]
-
+def _fila_de_folio(worksheet, folio: str) -> int | None:
+    """Retorna el número de fila (1-indexed) donde está el folio, o None."""
+    col_folio   = COLUMN_CONFIG["folio"]
     encabezados = worksheet.row_values(1)
+    if col_folio not in encabezados:
+        return None
+    idx_folio = encabezados.index(col_folio) + 1
+    col_vals  = worksheet.col_values(idx_folio)
+    for i, val in enumerate(col_vals[1:], start=2):  # skip header
+        if str(val).strip() == str(folio).strip():
+            return i
+    return None
 
-    # Crear columna Estado si no existe
-    if col_estado not in encabezados:
-        siguiente_col = len(encabezados) + 1
-        worksheet.update_cell(1, siguiente_col, col_estado)
-        encabezados.append(col_estado)
 
-    idx_estado = encabezados.index(col_estado) + 1   # gspread usa índices 1-based
+def _asegurar_columna(worksheet, nombre_col: str) -> int:
+    """
+    Si la columna no existe, la crea al final.
+    Retorna el índice de columna (1-indexed).
+    """
+    encabezados = worksheet.row_values(1)
+    if nombre_col in encabezados:
+        return encabezados.index(nombre_col) + 1
+    nuevo_idx = len(encabezados) + 1
+    worksheet.update_cell(1, nuevo_idx, nombre_col)
+    return nuevo_idx
 
-    registros = worksheet.get_all_records()
-    for i, fila in enumerate(registros, start=2):     # fila 1 = encabezados
-        if str(fila.get(col_folio, "")).strip() == str(folio).strip():
-            worksheet.update_cell(i, idx_estado, estado)
+
+def _ts() -> str:
+    return datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+
+def registrar_documento_generado(worksheet, folio: str) -> None:
+    """Escribe timestamp en 'Documento Generado' para la fila del folio."""
+    try:
+        fila = _fila_de_folio(worksheet, folio)
+        if not fila:
             return
+        idx = _asegurar_columna(worksheet, COL_DOC_GENERADO)
+        worksheet.update_cell(fila, idx, f"Sí - {_ts()}")
+    except Exception:
+        pass
+
+
+def registrar_link_drive(worksheet, folio: str, link: str) -> None:
+    """Escribe el link de Drive en 'Link Drive' para la fila del folio."""
+    try:
+        fila = _fila_de_folio(worksheet, folio)
+        if not fila:
+            return
+        idx = _asegurar_columna(worksheet, COL_LINK_DRIVE)
+        worksheet.update_cell(fila, idx, link)
+    except Exception:
+        pass
+
+
+def registrar_estado_envio(worksheet, folio: str, enviado: bool) -> None:
+    """
+    Escribe en 'Correo Enviado':
+      - "Enviado DD/MM/YYYY HH:MM"  si enviado=True
+      - "Fallido DD/MM/YYYY HH:MM"  si enviado=False
+    """
+    try:
+        fila = _fila_de_folio(worksheet, folio)
+        if not fila:
+            return
+        idx   = _asegurar_columna(worksheet, COL_CORREO_ESTADO)
+        valor = f"{'Enviado' if enviado else 'Fallido'} - {_ts()}"
+        worksheet.update_cell(fila, idx, valor)
+    except Exception:
+        pass
