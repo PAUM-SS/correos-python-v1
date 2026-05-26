@@ -46,26 +46,20 @@ SESION_CONFIG: dict[str, str] = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 CAMPOS = {
+    # ── Datos individuales (varían por persona) ───────────────────────────────
     "folio": {
-        # Rectángulo a borrar (x_ini, y_ini, x_fin, y_fin)
         "erase_box": (1680, 28, 2250, 88),
-        # Posición del texto: (x, y)
         "pos":       (2220, 40),
-        # Alineación Pillow: "ra" = right-ascender (alineado derecha, arriba)
-        "anchor":    "ra",
-        # Color RGB exacto del texto original
+        "anchor":    "ra",          # right-ascender: alineado a la derecha
         "color":     (22, 52, 81),
-        # Tamaño de fuente en píxeles
         "font_size": 36,
-        # Tipo de fuente: "mono" | "bold" | "regular"
         "font_type": "mono",
-        # Texto a renderizar: función lambda que recibe datos_fila
         "texto_fn":  lambda d: str(d.get(COLUMN_CONFIG["folio"], "")),
     },
     "nombre_apellido": {
         "erase_box": (140, 1238, 2110, 1425),
         "pos":       (1125, 1334),
-        "anchor":    "mm",                     # mm = middle-middle (centrado)
+        "anchor":    "mm",          # middle-middle: centrado
         "color":     (0, 111, 198),
         "font_size": 132,
         "font_type": "bold",
@@ -73,6 +67,43 @@ CAMPOS = {
             f"{d.get(COLUMN_CONFIG['nombre'], '')} "
             f"{d.get(COLUMN_CONFIG['apellido'], '')}"
         ).strip(),
+    },
+
+    # ── Datos de sesión (fijos para el lote, vienen de SESION_CONFIG) ─────────
+    "ponencia": {
+        # Línea completa: "Por asistir durante la sesión mensual '<<Ponencia>>'"
+        "erase_box": (400, 1478, 1860, 1558),
+        "pos":       (1127, 1517),
+        "anchor":    "mm",
+        "color":     (110, 110, 110),
+        "font_size": 44,
+        "font_type": "italic",
+        "texto_fn":  lambda d: (
+            f'Por asistir durante la sesión mensual \u201c{SESION_CONFIG["ponencia"]}\u201d '
+            if SESION_CONFIG["ponencia"] else ""
+        ),
+    },
+    "ponente": {
+        # Línea completa: "impartida por '<<Ponente>>'"
+        "erase_box": (710, 1555, 1540, 1630),
+        "pos":       (1127, 1595),
+        "anchor":    "mm",
+        "color":     (110, 110, 110),
+        "font_size": 44,
+        "font_type": "italic",
+        "texto_fn":  lambda d: (
+            f'impartida por \u201c{SESION_CONFIG["ponente"]}\u201d'
+            if SESION_CONFIG["ponente"] else ""
+        ),
+    },
+    "fecha": {
+        "erase_box": (840, 1740, 1410, 1825),
+        "pos":       (1127, 1782),
+        "anchor":    "mm",
+        "color":     (110, 110, 110),
+        "font_size": 55,
+        "font_type": "bold",
+        "texto_fn":  lambda d: SESION_CONFIG["fecha"],
     },
 }
 
@@ -180,6 +211,12 @@ def _cargar_fuente(tipo: str, tamaño: int) -> ImageFont.FreeTypeFont:
             "Arial Bold.ttf",
             "LiberationSans-Bold.ttf",  # Linux
             "DejaVuSans-Bold.ttf",      # Linux fallback
+        ],
+        "italic": [
+            "ariali.ttf",               # Windows Arial Italic
+            "Arial Italic.ttf",
+            "LiberationSans-Italic.ttf",     # Linux
+            "DejaVuSans-Oblique.ttf",        # Linux fallback
         ],
         "mono": [
             "cour.ttf",                         # Windows
