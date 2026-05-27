@@ -303,8 +303,6 @@ class AplicacionConstancias(tk.Tk):
                 self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Enviando correo…", "enviando"))
                 email_cfg = cfg.get("email_cuerpo", {})
                 enviar_correo(
-                    remitente=self.var_remitente.get().strip(),
-                    contrasena=self.var_contrasena.get().strip(),
                     destinatario=email,
                     nombre=nombre, apellido=apellido, folio=folio,
                     archivo_adjunto=pdf_bytes, nombre_archivo=nombre_pdf,

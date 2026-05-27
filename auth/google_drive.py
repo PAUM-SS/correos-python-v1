@@ -1,63 +1,38 @@
 """
 auth/google_drive.py
-Sube PDFs a Google Drive, obtiene links compartibles y consulta
-datos de la cuenta de servicio.
-
-Requiere scope: "https://www.googleapis.com/auth/drive"
+Operaciones con Google Drive usando autenticación OAuth2.
 """
 
-import io
 import json
 import os
 
 try:
     import requests as _req
-    from google.oauth2.service_account import Credentials
-    from google.auth.transport.requests import Request as GReq
-    GOOGLE_AVAILABLE = True
+    REQUESTS_AVAILABLE = True
 except ImportError:
-    GOOGLE_AVAILABLE = False
+    REQUESTS_AVAILABLE = False
 
 from config import CREDENTIALS_FILE
+from auth.oauth import obtener_credenciales, credenciales_json_validas
 
 _DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  TOKEN
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _token() -> str:
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=[_DRIVE_SCOPE])
-    creds.refresh(GReq())
+    """Obtiene un access token OAuth2 válido."""
+    from google.auth.transport.requests import Request
+    creds = obtener_credenciales()
+    if not creds.valid:
+        creds.refresh(Request())
     return creds.token
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  SUBIR PDF
-# ─────────────────────────────────────────────────────────────────────────────
-
 def subir_pdf(pdf_bytes: bytes, nombre_archivo: str, folder_id: str = "") -> dict:
-    """
-    Sube un PDF a Google Drive.
+    """Sube un PDF a Google Drive y lo hace público (anyone with link)."""
+    if not REQUESTS_AVAILABLE:
+        raise ImportError("Instala: pip install requests")
 
-    Args:
-        pdf_bytes:      bytes del archivo PDF.
-        nombre_archivo: nombre con el que se guardará en Drive (incluye .pdf).
-        folder_id:      ID de la carpeta destino. Si está vacío, se sube a My Drive.
-
-    Returns:
-        dict con claves 'id' y 'webViewLink'.
-
-    Raises:
-        RuntimeError: si la subida falla.
-    """
-    if not GOOGLE_AVAILABLE:
-        raise ImportError("Instala: pip install google-auth requests")
-    if not os.path.exists(CREDENTIALS_FILE):
-        raise FileNotFoundError(f"No se encontró '{CREDENTIALS_FILE}'.")
-
-    token = _token()
+    token    = _token()
     BOUNDARY = "pdf_boundary_xZ9m"
 
     meta = {"name": nombre_archivo, "mimeType": "application/pdf"}
@@ -75,7 +50,7 @@ def subir_pdf(pdf_bytes: bytes, nombre_archivo: str, folder_id: str = "") -> dic
         "?uploadType=multipart&fields=id,webViewLink",
         headers={
             "Authorization": f"Bearer {token}",
-            "Content-Type": f"multipart/related; boundary={BOUNDARY}",
+            "Content-Type":  f"multipart/related; boundary={BOUNDARY}",
         },
         data=cuerpo,
         timeout=120,
@@ -89,7 +64,6 @@ def subir_pdf(pdf_bytes: bytes, nombre_archivo: str, folder_id: str = "") -> dic
 
 
 def _hacer_publico(file_id: str, token: str) -> None:
-    """Permite ver el archivo a cualquiera con el link."""
     try:
         _req.post(
             f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
@@ -101,29 +75,13 @@ def _hacer_publico(file_id: str, token: str) -> None:
         pass
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  INFO DE LA CUENTA DE SERVICIO
-# ─────────────────────────────────────────────────────────────────────────────
-
 def obtener_email_bot() -> str:
-    """Retorna el client_email de credentials.json."""
-    if not os.path.exists(CREDENTIALS_FILE):
-        return f"❌ '{CREDENTIALS_FILE}' no encontrado"
-    try:
-        with open(CREDENTIALS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("client_email", "client_email no encontrado en el JSON")
-    except Exception as e:
-        return f"Error leyendo credentials.json: {e}"
+    """Para OAuth2 no hay 'email del bot' — retorna estado de autorización."""
+    from auth.oauth import obtener_info_estado
+    info = obtener_info_estado()
+    return info["estado_txt"]
 
 
 def credenciales_validas() -> bool:
-    """Verifica que credentials.json existe y tiene el formato correcto."""
-    if not os.path.exists(CREDENTIALS_FILE):
-        return False
-    try:
-        with open(CREDENTIALS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("type") == "service_account" and "client_email" in data
-    except Exception:
-        return False
+    """Verifica que credentials.json es un archivo OAuth2 válido."""
+    return credenciales_json_validas()
