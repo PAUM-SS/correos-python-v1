@@ -21,6 +21,7 @@ from config_manager import cargar_settings, aplicar_settings
 from auth          import (
     conectar_google_sheets, obtener_registros_con_folio,
     registrar_documento_generado, registrar_link_drive, registrar_estado_envio,
+    generar_folios_sesion,
     subir_pdf,
 )
 from send          import enviar_correo
@@ -263,12 +264,6 @@ class AplicacionConstancias(tk.Tk):
 
             self.log(f"[{i+1}/{total}] '{nombre} {apellido}' | {email} | {folio}")
 
-            if not folio or "/" in folio:
-                fallidos += 1; fila["_estado_local"] = "fallido"
-                self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Folio inválido", "fallido"))
-                self.log(f"  ⚠ Folio '{folio}' inválido — omitido.", "warn")
-                continue
-
             if not email:
                 fallidos += 1; fila["_estado_local"] = "fallido"
                 self.after(0, lambda ix=idx: self.panel_tabla.actualizar_fila(ix, "Sin email", "fallido"))
@@ -448,6 +443,32 @@ class AplicacionConstancias(tk.Tk):
             return False
 
         return True
+
+    def iniciar_generacion_folios(self) -> None:
+        """Lanza la generación de Folios Sesión en hilo secundario."""
+        if not self.worksheet:
+            from tkinter import messagebox
+            messagebox.showwarning(
+                "Sin conexión",
+                "Primero carga los datos desde la nube para conectar con la hoja.",
+            )
+            return
+        self.log("Iniciando generación de Folios Sesión…", "info")
+        import threading
+        threading.Thread(target=self._tarea_generar_folios, daemon=True).start()
+
+    def _tarea_generar_folios(self) -> None:
+        """Hilo: escribe los folios en la columna 'Folio Sesion' de la hoja."""
+        try:
+            escritos = generar_folios_sesion(self.worksheet)
+            if escritos:
+                self.log(f"✔ {escritos} folios generados en columna 'Folio Sesion'.", "ok")
+            else:
+                self.log("Todas las filas ya tenían folio asignado. No se escribió ninguno.", "warn")
+            # Recargar datos para reflejar los nuevos folios en la tabla
+            self.after(500, self.iniciar_carga_datos)
+        except Exception as e:
+            self.log(f"✘ Error generando folios: {e}", "err")
 
     def _cargar_settings_iniciales(self) -> None:
         """Carga settings.json y pre-rellena las variables Tkinter."""

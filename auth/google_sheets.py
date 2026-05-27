@@ -77,18 +77,19 @@ def verificar_columnas(worksheet) -> dict:
 
 def obtener_registros_con_folio(worksheet) -> tuple[list[dict], dict]:
     """
-    Descarga registros y filtra por folio válido.
-    Marca como 'enviado' las filas donde COL_CORREO_ESTADO ya dice "Enviado".
+    Descarga TODOS los registros con al menos una celda no vacía.
+    No filtra por folio — se envían constancias a todas las personas.
+    Marca como 'enviado' las filas donde COL_CORREO_ESTADO ya dice "Enviado"
+    (deduplicación: no se reenvían constancias ya procesadas).
     Retorna (registros, reporte_columnas).
     """
-    reporte   = verificar_columnas(worksheet)
-    col_folio = COLUMN_CONFIG["folio"]
-    todos     = worksheet.get_all_records()
+    reporte = verificar_columnas(worksheet)
+    todos   = worksheet.get_all_records(numericise_ignore=['all'])
 
     filtrados = []
     for fila in todos:
-        folio = fila.get(col_folio, "")
-        if not folio_es_valido(folio):
+        # Saltar filas completamente vacías
+        if not any(str(v).strip() for v in fila.values()):
             continue
 
         estado_envio = str(fila.get(COL_CORREO_ESTADO, "")).strip()
@@ -176,3 +177,71 @@ def registrar_estado_envio(worksheet, folio: str, enviado: bool) -> None:
         worksheet.update_cell(fila, idx, valor)
     except Exception:
         pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GENERACIÓN DE FOLIOS SESIÓN
+# ─────────────────────────────────────────────────────────────────────────────
+
+COL_FOLIO_SESION = "Folio Sesion"
+
+
+def generar_folios_sesion(worksheet) -> int:
+    """
+    Crea o actualiza la columna 'Folio Sesion' en la hoja.
+
+    Formato: {índice_4_dígitos}{mes_2_dígitos}{año_4_dígitos}
+    Ej: fila 1 → "0001052025",  fila 2 → "0002052025",  etc.
+
+    Los valores se escriben como texto (value_input_option=RAW) para
+    que Google Sheets NO convierta "0001052025" al número 1052025.
+
+    Las filas que ya tienen folio asignado no se sobreescriben.
+    Usa batch update: una sola llamada API para todas las filas.
+
+    Returns:
+        Número de folios escritos.
+    """
+    import datetime
+    import gspread
+
+    encabezados = worksheet.row_values(1)
+
+    # Crear la columna si no existe
+    if COL_FOLIO_SESION not in encabezados:
+        nueva_col = len(encabezados) + 1
+        worksheet.update_cell(1, nueva_col, COL_FOLIO_SESION)
+        encabezados.append(COL_FOLIO_SESION)
+
+    idx_col  = encabezados.index(COL_FOLIO_SESION) + 1    # 1-indexed
+    mes_anio = datetime.datetime.now().strftime("%m%Y")    # "052025"
+
+    # Letra de la columna (A, B, C... Z, AA, etc.)
+    col_letra  = gspread.utils.rowcol_to_a1(1, idx_col)[:-1]
+    col_actual = worksheet.col_values(idx_col)             # incluye encabezado
+    todos      = worksheet.get_all_records(numericise_ignore=['all'])
+
+    # Construir lista de actualizaciones (no sobreescribir existentes)
+    updates = []
+    for i, fila in enumerate(todos, start=1):
+        fila_hoja    = i + 1                               # +1 por encabezado
+        valor_actual = col_actual[fila_hoja - 1] if fila_hoja <= len(col_actual) else ""
+        if str(valor_actual).strip():
+            continue                                        # ya tiene folio
+
+        folio = f"{str(i).zfill(4)}{mes_anio}"            # "0001052025"
+        updates.append({
+            "range":  f"{col_letra}{fila_hoja}",
+            "values": [[folio]],
+        })
+
+    if not updates:
+        return 0
+
+    # Batch update con RAW → los strings se guardan tal cual, sin conversión numérica
+    worksheet.spreadsheet.values_batch_update({
+        "valueInputOption": "RAW",
+        "data": updates,
+    })
+
+    return len(updates)

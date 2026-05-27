@@ -6,6 +6,8 @@ from .google_sheets import (
     registrar_documento_generado,
     registrar_link_drive,
     registrar_estado_envio,
+    generar_folios_sesion,
+    COL_FOLIO_SESION,
 )
 from .google_drive import (
     subir_pdf,
@@ -20,6 +22,8 @@ __all__ = [
     "registrar_documento_generado",
     "registrar_link_drive",
     "registrar_estado_envio",
+    "generar_folios_sesion",
+    "COL_FOLIO_SESION",
     "subir_pdf",
     "obtener_email_bot",
     "credenciales_validas",

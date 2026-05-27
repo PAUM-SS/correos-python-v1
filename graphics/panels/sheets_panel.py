@@ -38,14 +38,21 @@ class PanelSheets(PanelBase):
             contenedor,
             text="☁  Cargar Datos desde la Nube",
             style="Primary.TButton",
-            command=self.app.iniciar_carga_datos,   # delegado al orquestador
+            command=self.app.iniciar_carga_datos,
         ).pack(fill="x", pady=(10, 2))
 
-        self.lbl_registros = ttk.Label(contenedor, text="Registros con folio: —")
+        ttk.Button(
+            contenedor,
+            text="🔢  Generar Folios Sesión",
+            style="Primary.TButton",
+            command=self.app.iniciar_generacion_folios,
+        ).pack(fill="x", pady=(4, 2))
+
+        self.lbl_registros = ttk.Label(contenedor, text="Registros cargados: —")
         self.lbl_registros.pack(anchor="w", pady=(4, 0))
 
     # ── Actualización ─────────────────────────────────────────────────────
 
     def actualizar_contador(self, total: int) -> None:
         """Actualiza el texto del contador de registros."""
-        self.lbl_registros.config(text=f"Registros con folio: {total}")
+        self.lbl_registros.config(text=f"Registros cargados: {total}")
